@@ -4,14 +4,14 @@ A real-time, Facebook Messenger–style private chat for a members website.
 Arabic interface, fully RTL, built with Next.js (App Router), TypeScript,
 Tailwind CSS, and Socket.io.
 
-**No database. No separate services. `npm run dev` starts everything.**
+**No database. `npm run dev` starts everything (Next.js + Socket.io).**
 
 ## Features
 
 | # | Feature | Implementation |
 |---|---------|----------------|
 | 1 | Members website page (logo "موقعنا", placeholder content) | `src/app/page.tsx` + `src/components/messenger/chat-app-shell.tsx` |
-| 2 | Sidebar "الأعضاء المتصلون" with real-time green/gray dots | `members-sidebar.tsx` + presence broadcast in `server.ts` |
+| 2 | Sidebar "الأعضاء المتصلون" with real-time green/gray dots | `members-sidebar.tsx` + presence broadcast in `mini-services/chat-service` |
 | 3 | Click member → floating chat window docked at the bottom | `chat-dock.tsx` + `chat-window.tsx` |
 | 4 | Multiple windows side-by-side (max 3 visible, rest as round avatar bubbles) | `chat-dock.tsx` (`getMaxVisible`) |
 | 5 | Minimize / close each window | `chat-header.tsx` |
@@ -20,16 +20,11 @@ Tailwind CSS, and Socket.io.
 | 8 | Unread counter badges on members & minimized windows | `unreadCount` on `Member`, badges in sidebar + collapsed bubbles |
 | 9 | Mobile responsive: chat opens full-screen with back button | responsive classes in `chat-window.tsx` + `chat-header.tsx` |
 
-Additional polish:
-- Smooth open / minimize / new-message animations (CSS keyframes).
-- Optimistic message send (UI updates instantly, replaced by the stored row on success).
-- Soft shadow on floating windows, generous spacing, large readable Arabic font (Cairo).
-
 ## Tech Stack
 
-- **Framework**: Next.js 16 (App Router) + TypeScript 5
+- **Framework**: Next.js 16 (App Router, Turbopack) + TypeScript 5
 - **Styling**: Tailwind CSS 4 + custom CSS variables for the Messenger palette
-- **Real-time**: Socket.io attached to the same HTTP server as Next.js (single port)
+- **Real-time**: Socket.io mini-service (`mini-services/chat-service`, port 3003)
 - **State**: Zustand store (`src/store/chat-store.ts`)
 - **Auth**: Cookie-based session (bcrypt-hashed passwords)
 - **Storage**: In-memory (`src/lib/store.ts`) — no database, no Prisma
@@ -38,27 +33,38 @@ Additional polish:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                   server.ts (custom server)                  │
+│                   npm run dev (single command)                │
+│                                                               │
 │  ┌───────────────────────┐    ┌────────────────────────────┐ │
-│  │   Next.js app          │    │   Socket.io server         │ │
+│  │   Next.js app          │    │   Socket.io chat-service   │ │
 │  │   (pages + API routes) │    │   (presence + relay)       │ │
-│  │   port 3000            │    │   port 3000 /socket.io/*   │ │
-│  └───────────────────────┘    └────────────────────────────┘ │
-│                  shared in-memory store                       │
-│                  (src/lib/store.ts)                           │
+│  │   port 3000            │    │   port 3003                │ │
+│  │   in-memory store      │    │   no data storage          │ │
+│  └───────────┬───────────┘    └────────────┬───────────────┘ │
+│              │                              │                  │
+│              └──────── Caddy gateway ───────┘                  │
+│                /?XTransformPort=3003 → port 3003               │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-A single `bun server.ts` (run via `npm run dev` / `bun run dev`) starts
-the custom Next.js server with Socket.io attached. Both share the same
-HTTP port and the same in-memory store. No database, no separate
-processes, no `XTransformPort` routing.
+`npm run dev` starts both processes:
+- **Next.js** on port 3000 (Turbopack dev server with all pages and API routes)
+- **Socket.io** on port 3003 (real-time relay — presence, messages, typing, seen receipts)
+
+The Caddy gateway routes socket.io requests from the browser via
+`/?XTransformPort=3003` to port 3003. All other requests go to port 3000.
+
+The in-memory store lives in the Next.js process. The Socket.io service is
+a stateless relay — it just routes events between connected users.
 
 ## Project Structure
 
 ```
 .
-├── server.ts                      # custom Next.js server + Socket.io (single process)
+├── mini-services/
+│   └── chat-service/
+│       ├── package.json
+│       └── index.ts               # Socket.io server on port 3003
 ├── src/
 │   ├── app/
 │   │   ├── layout.tsx             # <html lang="ar" dir="rtl"> + Cairo font
@@ -84,7 +90,7 @@ processes, no `XTransformPort` routing.
 │   │   └── use-socket.ts          # socket.io event wiring (shared singleton)
 │   ├── lib/
 │   │   ├── store.ts               # in-memory data store + seed (no database)
-│   │   ├── socket-client.ts       # singleton Socket.io client
+│   │   ├── socket-client.ts       # singleton Socket.io client (XTransformPort)
 │   │   ├── auth.ts                # cookie session helpers
 │   │   └── utils.ts               # cn() helper
 │   └── store/
@@ -98,19 +104,20 @@ processes, no `XTransformPort` routing.
 
 ```bash
 npm install        # or: bun install
+cd mini-services/chat-service && npm install && cd ..
 ```
 
-### 2. Start the server
+### 2. Start everything
 
 ```bash
 npm run dev        # or: bun run dev
 ```
 
-That's it. The custom server (`server.ts`):
-1. Seeds 6 demo members into the in-memory store (password `123456`).
-2. Starts Next.js in dev mode.
-3. Attaches Socket.io to the same HTTP server.
-4. Listens on `http://localhost:3000`.
+This single command starts:
+- Next.js dev server on port 3000 (Turbopack)
+- Socket.io chat-service on port 3003
+
+The 6 demo members are auto-seeded into the in-memory store on first request.
 
 Open the app via the preview panel (or `http://localhost:81/` through the
 Caddy gateway if you're on the sandbox).
@@ -126,7 +133,7 @@ a different member, and start chatting.
 
 ## Seeded Members
 
-All passwords: `123456`. Seeded automatically on server startup.
+All passwords: `123456`. Seeded automatically on first API request.
 
 | Name | Avatar color |
 |------|--------------|
@@ -139,23 +146,21 @@ All passwords: `123456`. Seeded automatically on server startup.
 
 ## How Real-Time Works
 
-1. After login, the client opens a Socket.io connection to the **same
-   origin** (no separate port, no `XTransformPort`).
+1. After login, the client opens a Socket.io connection via
+   `io("/?XTransformPort=3003")` — Caddy routes this to port 3003.
 2. The client emits `authenticate` with the logged-in `userId`.
-3. The server tracks online users (`userId -> Set<socketId>`) and
-   broadcasts `user-online` / `user-offline` to everyone, so the sidebar
-   shows real-time green/gray dots.
+3. The chat-service tracks online users and broadcasts `user-online` /
+   `user-offline` to everyone.
 4. When a user sends a message:
    - The client POSTs to `/api/conversations/[memberId]/messages` (stores
-     in the in-memory store).
+     in the Next.js in-memory store).
    - On success, the client emits `message-sent` with the saved row.
-   - The server relays `new-message` to the recipient's sockets.
-5. Typing indicator: the client emits `typing` while the user is typing;
-   the server relays it to the peer.
+   - The chat-service relays `new-message` to the recipient's sockets.
+5. Typing indicator: the client emits `typing`; the service relays it.
 6. Read receipts: when a chat is opened, the client POSTs to
-   `/api/conversations/[memberId]/read` (marks messages seen in memory)
-   and emits `message-seen`; the server relays `messages-seen` so the
-   sender's outgoing bubbles flip to "تمت المشاهدة".
+   `/api/conversations/[memberId]/read` (marks seen in memory) and emits
+   `message-seen`; the service relays `messages-seen` so the sender's
+   outgoing bubbles flip to "تمت المشاهدة".
 
 ## Design Tokens
 
@@ -173,11 +178,9 @@ Card background:       #FFFFFF
 
 ## Notes
 
-- All data lives in process memory. Restarting the server resets messages
-  (the 6 members are re-seeded automatically).
-- The Socket.io path is `/socket.io/` (default), on the same port as
-  Next.js. No `XTransformPort` query parameter is needed.
+- All data lives in process memory. Restarting the Next.js server resets
+  messages (the 6 members are re-seeded automatically).
+- The Socket.io service is a stateless relay — it doesn't store any data.
 - Passwords are hashed with `bcryptjs` (10 rounds).
-- The custom server uses Next.js's webpack dev mode (Turbopack is not
-  supported with custom servers). Dev compiles are slightly slower but
-  fully functional.
+- The dev script uses `trap 'kill 0' EXIT` to ensure the Socket.io
+  background process is cleaned up when Next.js exits.
