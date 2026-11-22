@@ -4,26 +4,31 @@ A real-time, Facebook Messenger–style private chat for a members website.
 Arabic interface, fully RTL, built with Next.js (App Router), TypeScript,
 Tailwind CSS, and Socket.io.
 
-**No database. No custom server. `npm run dev` starts everything.**
+**No database. `npm run dev` starts Next.js; the platform automatically builds and starts the Socket.io mini-service.**
 
-## How it works
-
-The app uses Next.js's `instrumentation.ts` hook (a standard Next.js feature
-that runs on server startup) to start a Socket.io server on port 3003
-within the same Node.js process as Next.js. The main `dev` script is just
-`next dev -p 3000` — the Socket.io server starts automatically.
+## Architecture
 
 ```
-npm run dev
-  → next dev -p 3000          (Next.js on port 3000, Turbopack)
-    → instrumentation.ts      (runs on startup)
-      → startChatServer()     (Socket.io on port 3003, same process)
-        → in-memory store     (shared with Next.js API routes)
+┌─────────────────────────────────────────────────────────────┐
+│  npm run dev                                                  │
+│  → next dev -p 3000          (Next.js on port 3000)           │
+│                                                               │
+│  Platform automatically:                                      │
+│  → builds mini-services/chat-service/ → mini-service-chat-service.js │
+│  → starts it in background   (Socket.io on port 3003)         │
+│                                                               │
+│  Caddy gateway (port 81):                                     │
+│  → / → port 3000 (Next.js)                                    │
+│  → /?XTransformPort=3003 → port 3003 (Socket.io)              │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-No custom server. No background processes. No separate terminal. Caddy
-routes `/?XTransformPort=3003` to port 3003 for the browser's socket
-connection.
+The Socket.io service lives in `mini-services/chat-service/` — the
+platform's built-in scripts (`mini-services-install.sh`,
+`mini-services-build.sh`, `mini-services-start.sh`) automatically install
+its dependencies, build it, and start it in the background alongside
+Next.js. No custom server, no `instrumentation.ts`, no background
+processes in the dev script.
 
 ## Features
 
@@ -43,7 +48,7 @@ connection.
 
 - **Framework**: Next.js 16 (App Router, Turbopack) + TypeScript 5
 - **Styling**: Tailwind CSS 4 + custom CSS variables for the Messenger palette
-- **Real-time**: Socket.io, started via `instrumentation.ts` (same process as Next.js)
+- **Real-time**: Socket.io mini-service (`mini-services/chat-service`, port 3003)
 - **State**: Zustand store (`src/store/chat-store.ts`)
 - **Auth**: Cookie-based session (bcrypt-hashed passwords)
 - **Storage**: In-memory (`src/lib/store.ts`) — no database
@@ -52,27 +57,27 @@ connection.
 
 ```
 .
+├── mini-services/
+│   └── chat-service/
+│       ├── package.json          # own deps (socket.io)
+│       └── index.ts              # Socket.io server on port 3003
 ├── src/
-│   ├── instrumentation.ts         # Next.js startup hook → starts Socket.io
 │   ├── app/
-│   │   ├── layout.tsx             # <html lang="ar" dir="rtl"> + Cairo font
-│   │   ├── page.tsx               # server component: login or app shell
-│   │   ├── globals.css            # Tailwind + CSS variables + animations
+│   │   ├── layout.tsx            # <html lang="ar" dir="rtl"> + Cairo font
+│   │   ├── page.tsx              # server component: login or app shell
+│   │   ├── globals.css           # Tailwind + CSS variables + animations
 │   │   └── api/
 │   │       ├── auth/{login,logout,me}/route.ts
 │   │       ├── members/route.ts
 │   │       └── conversations/[memberId]/{messages,read}/route.ts
-│   ├── components/messenger/      # 11 UI components (avatar, header, input, etc.)
-│   ├── hooks/
-│   │   └── use-socket.ts          # socket.io event wiring
+│   ├── components/messenger/     # 11 UI components
+│   ├── hooks/use-socket.ts       # socket.io event wiring
 │   ├── lib/
-│   │   ├── chat-server.ts         # Socket.io server setup + event handlers
-│   │   ├── store.ts               # in-memory data store + seed (no database)
-│   │   ├── socket-client.ts       # singleton Socket.io client
-│   │   ├── auth.ts                # cookie session helpers
-│   │   └── utils.ts               # cn() helper
-│   └── store/
-│       └── chat-store.ts          # Zustand store
+│   │   ├── store.ts              # in-memory data store + seed
+│   │   ├── socket-client.ts      # singleton Socket.io client
+│   │   ├── auth.ts               # cookie session helpers
+│   │   └── utils.ts
+│   └── store/chat-store.ts       # Zustand store
 └── README.md
 ```
 
@@ -80,17 +85,11 @@ connection.
 
 ```bash
 npm install        # or: bun install
-npm run dev        # or: bun run dev
+npm run dev        # starts Next.js; platform auto-starts the Socket.io mini-service
 ```
 
-That's it. `next dev` starts Next.js on port 3000, and `instrumentation.ts`
-automatically starts Socket.io on port 3003 within the same process. The
-6 demo members are seeded into the in-memory store on first request.
-
 Open the preview panel, log in as any member (password `123456`), and
-start chatting. To test real-time across two users, open a second browser
-session (private window to avoid cookie conflicts) and log in as a
-different member.
+start chatting.
 
 ## Seeded Members
 
@@ -104,13 +103,3 @@ All passwords: `123456`.
 | نورا الشمري | `#10B981` |
 | سارة حسن | `#8B5CF6` |
 | عمر إبراهيم | `#EC4899` |
-
-## Design Tokens
-
-```
-Messenger blue:        #6280EE
-Incoming bubble gray:  #F3F3F3
-Online dot green:      #31A24C
-Unread badge red:      #E41E3F
-Border gray:           #E4E6EB
-```
