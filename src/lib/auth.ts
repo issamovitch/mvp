@@ -1,5 +1,5 @@
 import { cookies } from 'next/headers'
-import { db } from './db'
+import { findUserById } from './store'
 
 export const SESSION_COOKIE = 'messenger_session'
 
@@ -17,14 +17,11 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
   const store = await cookies()
   const userId = store.get(SESSION_COOKIE)?.value
   if (!userId) return null
-  const user = await db.user.findUnique({ where: { id: userId } })
+  const user = findUserById(userId)
   if (!user) return null
   return { id: user.id, name: user.name, avatar: user.avatar }
 }
 
-/**
- * Set the session cookie (called from the login route).
- */
 export async function setSessionCookie(userId: string) {
   const store = await cookies()
   store.set(SESSION_COOKIE, userId, {

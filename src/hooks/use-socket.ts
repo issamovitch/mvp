@@ -1,18 +1,15 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
-import { io, Socket } from 'socket.io-client'
+import { useEffect } from 'react'
+import { getSocket } from '@/lib/socket-client'
 import { useChatStore } from '@/store/chat-store'
 
-const SOCKET_PORT = 3003
-
 /**
- * Establishes the socket.io connection and wires every inbound
- * event into the global chat store. The connection lives for the
- * lifetime of the mounted component (the whole app shell).
+ * Establishes the socket.io connection (shared singleton) and wires
+ * every inbound event into the global chat store. The connection lives
+ * for the lifetime of the mounted component (the whole app shell).
  */
 export function useSocket() {
-  const socketRef = useRef<Socket | null>(null)
   const me = useChatStore((s) => s.me)
   const setOnlineUsers = useChatStore((s) => s.setOnlineUsers)
   const setUserOnline = useChatStore((s) => s.setUserOnline)
@@ -23,19 +20,7 @@ export function useSocket() {
 
   useEffect(() => {
     if (!me) return
-    // Caddy requires the XTransformPort query and path "/" exactly.
-    const socket = io(`/?XTransformPort=${SOCKET_PORT}`, {
-      transports: ['websocket', 'polling'],
-      reconnection: true,
-      reconnectionAttempts: 10,
-      reconnectionDelay: 1000,
-      timeout: 10000,
-    })
-    socketRef.current = socket
-
-    socket.on('connect', () => {
-      socket.emit('authenticate', { userId: me.id })
-    })
+    const socket = getSocket()
 
     const handleNewMessage = (msg: any) => {
       appendMessage({
@@ -47,9 +32,7 @@ export function useSocket() {
         seen: msg.seen ?? false,
         createdAt: msg.createdAt,
       })
-      // immediately mark as seen & notify the sender (chat is open
-      // or not — the store.appendMessage already incremented unread
-      // when it was closed). If open, mark seen via API + socket.
+      // If the chat is open, immediately mark seen and notify the sender.
       if (msg.receiverId === me.id) {
         const isOpen = useChatStore
           .getState()
@@ -65,6 +48,12 @@ export function useSocket() {
       }
     }
 
+    const onConnect = () => {
+      socket.emit('authenticate', { userId: me.id })
+    }
+
+    if (socket.connected) onConnect()
+    socket.on('connect', onConnect)
     socket.on('online-users', (ids: string[]) => setOnlineUsers(ids))
     socket.on('user-online', ({ userId }: { userId: string }) => setUserOnline(userId, true))
     socket.on('user-offline', ({ userId }: { userId: string }) => setUserOnline(userId, false))
@@ -75,19 +64,17 @@ export function useSocket() {
     socket.on('messages-seen', ({ otherUserId }: { otherUserId: string }) => {
       markChatSeen(otherUserId)
       patchMemberUnread(otherUserId, 0)
-      void otherUserId
     })
 
     return () => {
-      socket.removeAllListeners()
-      socket.disconnect()
-      socketRef.current = null
+      // Remove only our listeners — the shared socket stays connected.
+      socket.off('connect', onConnect)
+      socket.off('online-users')
+      socket.off('user-online')
+      socket.off('user-offline')
+      socket.off('new-message', handleNewMessage)
+      socket.off('typing')
+      socket.off('messages-seen')
     }
   }, [me, setOnlineUsers, setUserOnline, appendMessage, setTyping, markChatSeen, patchMemberUnread])
-
-  return socketRef
-}
-
-export function getSocket() {
-  return (window as any).__chatSocket as Socket | undefined
 }

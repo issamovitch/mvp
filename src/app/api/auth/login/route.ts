@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import bcrypt from 'bcryptjs'
-import { db } from '@/lib/db'
+import { findUserByName, seedIfEmpty } from '@/lib/store'
 import { setSessionCookie } from '@/lib/auth'
 
 export const runtime = 'nodejs'
 
 export async function POST(req: NextRequest) {
+  await seedIfEmpty()
   const body = await req.json().catch(() => ({} as any))
   const name = (body?.name as string | undefined)?.trim()
   const password = body?.password as string | undefined
@@ -14,7 +15,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'الرجاء إدخال الاسم وكلمة المرور' }, { status: 400 })
   }
 
-  const user = await db.user.findFirst({ where: { name } })
+  const user = findUserByName(name)
   if (!user) {
     return NextResponse.json({ error: 'الاسم غير موجود' }, { status: 404 })
   }

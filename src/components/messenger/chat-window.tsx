@@ -6,9 +6,7 @@ import { ChatInput } from './chat-input'
 import { MessageBubble } from './message-bubble'
 import { TypingIndicator } from './typing-indicator'
 import { useChatStore, Member, ChatMessage } from '@/store/chat-store'
-import { io, Socket } from 'socket.io-client'
-
-const SOCKET_PORT = 3003
+import { getSocket } from '@/lib/socket-client'
 
 interface ChatWindowProps {
   member: Member
@@ -19,9 +17,6 @@ interface ChatWindowProps {
   onClose: () => void
 }
 
-const WINDOW_HEIGHT = 440 // px
-const HEADER_HEIGHT = 48 // px
-
 export function ChatWindow({ member, online, minimized, onRestore, onMinimize, onClose }: ChatWindowProps) {
   const me = useChatStore((s) => s.me)
   const messages = useChatStore((s) => s.openChats.find((c) => c.memberId === member.id)?.messages ?? [])
@@ -31,7 +26,6 @@ export function ChatWindow({ member, online, minimized, onRestore, onMinimize, o
   const markChatSeen = useChatStore((s) => s.markChatSeen)
 
   const bodyRef = useRef<HTMLDivElement>(null)
-  const socketRef = useRef<Socket | null>(null)
   const [loaded, setLoaded] = useState(false)
 
   // Load history once when the window mounts
@@ -43,7 +37,6 @@ export function ChatWindow({ member, online, minimized, onRestore, onMinimize, o
         const data = await res.json()
         if (cancelled || !data?.messages) return
         setChatMessages(member.id, data.messages as ChatMessage[])
-        // mark seen locally for my own messages (they were already seen by the act of opening)
         markChatSeen(member.id)
       } finally {
         setLoaded(true)
@@ -54,24 +47,6 @@ export function ChatWindow({ member, online, minimized, onRestore, onMinimize, o
     }
   }, [member.id, setChatMessages, markChatSeen])
 
-  // Get a shared socket for sending typing / message-seen events
-  useEffect(() => {
-    const socket = io(`/?XTransformPort=${SOCKET_PORT}`, {
-      transports: ['websocket', 'polling'],
-      reconnection: true,
-      reconnectionAttempts: 10,
-      reconnectionDelay: 1000,
-    })
-    socketRef.current = socket
-    socket.on('connect', () => {
-      if (me) socket.emit('authenticate', { userId: me.id })
-    })
-    return () => {
-      socket.removeAllListeners()
-      socket.disconnect()
-    }
-  }, [me])
-
   // Auto-scroll to bottom whenever messages or typing change
   useEffect(() => {
     const el = bodyRef.current
@@ -80,7 +55,6 @@ export function ChatWindow({ member, online, minimized, onRestore, onMinimize, o
 
   const handleSend = async (text: string) => {
     if (!me) return
-    // optimistic local append
     const optimistic: ChatMessage = {
       id: 'optimistic_' + Date.now(),
       text,
@@ -106,20 +80,18 @@ export function ChatWindow({ member, online, minimized, onRestore, onMinimize, o
         useChatStore
           .getState()
           .openChats.find((c) => c.memberId === member.id)!
-          .messages.map((m) =>
-            m.id === optimistic.id ? { ...saved, seen: m.seen } : m
-          )
+          .messages.map((m) => (m.id === optimistic.id ? { ...saved, seen: m.seen } : m))
       )
-      // relay to recipient in real-time
-      socketRef.current?.emit('message-sent', saved)
+      // relay to recipient in real-time via the shared socket
+      getSocket().emit('message-sent', saved)
     } catch {
-      // leave optimistic in place on failure; could mark as failed
+      // leave optimistic in place on failure
     }
   }
 
   const handleTyping = (isTyping: boolean) => {
     if (!me) return
-    socketRef.current?.emit('typing', {
+    getSocket().emit('typing', {
       toUserId: member.id,
       fromUserId: me.id,
       isTyping,

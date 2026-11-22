@@ -1,36 +1,29 @@
 import { NextResponse } from 'next/server'
-import { db } from '@/lib/db'
 import { getCurrentUser } from '@/lib/auth'
+import { getUsers, getUnreadCounts, seedIfEmpty } from '@/lib/store'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
+  await seedIfEmpty()
   const me = await getCurrentUser()
   if (!me) {
     return NextResponse.json({ error: 'غير مصرح' }, { status: 401 })
   }
 
-  // list every other member, plus their unread count toward me
-  const users = await db.user.findMany({
-    where: { id: { not: me.id } },
-    orderBy: { name: 'asc' },
-  })
-
-  // count unread messages (sender = member, receiver = me, seen = false)
-  const unread = await db.message.groupBy({
-    by: ['senderId'],
-    where: { receiverId: me.id, seen: false },
-    _count: { _all: true },
-  })
-  const unreadMap = new Map(unread.map((u) => [u.senderId, u._count._all]))
+  const all = getUsers()
+  const unread = getUnreadCounts(me.id)
 
   return NextResponse.json({
-    members: users.map((u) => ({
-      id: u.id,
-      name: u.name,
-      avatar: u.avatar,
-      unreadCount: unreadMap.get(u.id) ?? 0,
-    })),
+    members: all
+      .filter((u) => u.id !== me.id)
+      .sort((a, b) => a.name.localeCompare(b.name, 'ar'))
+      .map((u) => ({
+        id: u.id,
+        name: u.name,
+        avatar: u.avatar,
+        unreadCount: unread.get(u.id) ?? 0,
+      })),
   })
 }
