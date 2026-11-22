@@ -7,16 +7,28 @@ const SOCKET_PORT = 3003
 let socket: Socket | null = null
 
 /**
- * Singleton Socket.io client. Connects through the Caddy gateway
- * via the XTransformPort query parameter (path "/"), which Caddy
- * routes to the chat-service mini-service on port 3003.
+ * Singleton Socket.io client.
+ *
+ * On the deployment platform, connects via Caddy gateway:
+ *   io("/?XTransformPort=3003")
+ *
+ * When running locally (localhost / 127.0.0.1), connects directly:
+ *   io("http://localhost:3003")
  */
 export function getSocket(): Socket {
   if (typeof window === 'undefined') {
     throw new Error('getSocket() can only be called in the browser')
   }
   if (!socket) {
-    socket = io(`/?XTransformPort=${SOCKET_PORT}`, {
+    const isLocal =
+      window.location.hostname === 'localhost' ||
+      window.location.hostname === '127.0.0.1'
+
+    const url = isLocal
+      ? `http://localhost:${SOCKET_PORT}`
+      : `/?XTransformPort=${SOCKET_PORT}`
+
+    socket = io(url, {
       transports: ['polling', 'websocket'],
       reconnection: true,
       reconnectionAttempts: 10,
