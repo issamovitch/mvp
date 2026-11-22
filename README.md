@@ -4,68 +4,56 @@ A real-time, Facebook Messenger–style private chat for a members website.
 Arabic interface, fully RTL, built with Next.js (App Router), TypeScript,
 Tailwind CSS, and Socket.io.
 
-**No database. `npm run dev` starts everything (Next.js + Socket.io).**
+**No database. No custom server. `npm run dev` starts everything.**
+
+## How it works
+
+The app uses Next.js's `instrumentation.ts` hook (a standard Next.js feature
+that runs on server startup) to start a Socket.io server on port 3003
+within the same Node.js process as Next.js. The main `dev` script is just
+`next dev -p 3000` — the Socket.io server starts automatically.
+
+```
+npm run dev
+  → next dev -p 3000          (Next.js on port 3000, Turbopack)
+    → instrumentation.ts      (runs on startup)
+      → startChatServer()     (Socket.io on port 3003, same process)
+        → in-memory store     (shared with Next.js API routes)
+```
+
+No custom server. No background processes. No separate terminal. Caddy
+routes `/?XTransformPort=3003` to port 3003 for the browser's socket
+connection.
 
 ## Features
 
-| # | Feature | Implementation |
-|---|---------|----------------|
-| 1 | Members website page (logo "موقعنا", placeholder content) | `src/app/page.tsx` + `src/components/messenger/chat-app-shell.tsx` |
-| 2 | Sidebar "الأعضاء المتصلون" with real-time green/gray dots | `members-sidebar.tsx` + presence broadcast in `mini-services/chat-service` |
-| 3 | Click member → floating chat window docked at the bottom | `chat-dock.tsx` + `chat-window.tsx` |
-| 4 | Multiple windows side-by-side (max 3 visible, rest as round avatar bubbles) | `chat-dock.tsx` (`getMaxVisible`) |
-| 5 | Minimize / close each window | `chat-header.tsx` |
-| 6 | Instant send/receive, "يكتب الآن..." typing indicator, "تمت المشاهدة" seen status | Socket.io events `message-sent`, `typing`, `message-seen` |
-| 7 | Messages saved in memory, full history reloads on reopen | `src/lib/store.ts` + `GET /api/conversations/[memberId]/messages` |
-| 8 | Unread counter badges on members & minimized windows | `unreadCount` on `Member`, badges in sidebar + collapsed bubbles |
-| 9 | Mobile responsive: chat opens full-screen with back button | responsive classes in `chat-window.tsx` + `chat-header.tsx` |
+| # | Feature |
+|---|---------|
+| 1 | Members website page (header with logo "موقعنا", hero, feature cards) |
+| 2 | Sidebar "الأعضاء المتصلون" with real-time green/gray presence dots |
+| 3 | Click a member → floating chat window docked at bottom-right |
+| 4 | Multiple windows (max 3 visible, rest collapse to round avatar bubbles) |
+| 5 | Minimize and close each window |
+| 6 | Instant send/receive, "يكتب الآن..." typing indicator, "تمت المشاهدة" seen status |
+| 7 | Messages saved in memory, full history reloads on reopen |
+| 8 | Unread counter badges on sidebar members and collapsed bubbles |
+| 9 | Mobile responsive: chat opens full-screen with back button |
 
 ## Tech Stack
 
 - **Framework**: Next.js 16 (App Router, Turbopack) + TypeScript 5
 - **Styling**: Tailwind CSS 4 + custom CSS variables for the Messenger palette
-- **Real-time**: Socket.io mini-service (`mini-services/chat-service`, port 3003)
+- **Real-time**: Socket.io, started via `instrumentation.ts` (same process as Next.js)
 - **State**: Zustand store (`src/store/chat-store.ts`)
 - **Auth**: Cookie-based session (bcrypt-hashed passwords)
-- **Storage**: In-memory (`src/lib/store.ts`) — no database, no Prisma
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                   npm run dev (single command)                │
-│                                                               │
-│  ┌───────────────────────┐    ┌────────────────────────────┐ │
-│  │   Next.js app          │    │   Socket.io chat-service   │ │
-│  │   (pages + API routes) │    │   (presence + relay)       │ │
-│  │   port 3000            │    │   port 3003                │ │
-│  │   in-memory store      │    │   no data storage          │ │
-│  └───────────┬───────────┘    └────────────┬───────────────┘ │
-│              │                              │                  │
-│              └──────── Caddy gateway ───────┘                  │
-│                /?XTransformPort=3003 → port 3003               │
-└─────────────────────────────────────────────────────────────┘
-```
-
-`npm run dev` starts both processes:
-- **Next.js** on port 3000 (Turbopack dev server with all pages and API routes)
-- **Socket.io** on port 3003 (real-time relay — presence, messages, typing, seen receipts)
-
-The Caddy gateway routes socket.io requests from the browser via
-`/?XTransformPort=3003` to port 3003. All other requests go to port 3000.
-
-The in-memory store lives in the Next.js process. The Socket.io service is
-a stateless relay — it just routes events between connected users.
+- **Storage**: In-memory (`src/lib/store.ts`) — no database
 
 ## Project Structure
 
 ```
 .
-├── mini-services/
-│   └── chat-service/
-│       ├── package.json
-│       └── index.ts               # Socket.io server on port 3003
 ├── src/
+│   ├── instrumentation.ts         # Next.js startup hook → starts Socket.io
 │   ├── app/
 │   │   ├── layout.tsx             # <html lang="ar" dir="rtl"> + Cairo font
 │   │   ├── page.tsx               # server component: login or app shell
@@ -74,113 +62,55 @@ a stateless relay — it just routes events between connected users.
 │   │       ├── auth/{login,logout,me}/route.ts
 │   │       ├── members/route.ts
 │   │       └── conversations/[memberId]/{messages,read}/route.ts
-│   ├── components/messenger/
-│   │   ├── avatar.tsx             # colored circle with Arabic initial
-│   │   ├── status-dot.tsx         # green/gray presence indicator
-│   │   ├── chat-header.tsx        # blue header w/ minimize, close, back
-│   │   ├── chat-input.tsx         # pill input + paper-plane send
-│   │   ├── message-bubble.tsx     # gray incoming / blue outgoing bubbles
-│   │   ├── typing-indicator.tsx   # 3-dot animation
-│   │   ├── chat-window.tsx        # single floating window
-│   │   ├── chat-dock.tsx          # bottom dock with up to 3 windows + collapsed bubbles
-│   │   ├── members-sidebar.tsx    # "الأعضاء المتصلون"
-│   │   ├── login-form.tsx         # login screen w/ quick-fill buttons
-│   │   └── chat-app-shell.tsx     # main app shell (header + main + sidebar + dock)
+│   ├── components/messenger/      # 11 UI components (avatar, header, input, etc.)
 │   ├── hooks/
-│   │   └── use-socket.ts          # socket.io event wiring (shared singleton)
+│   │   └── use-socket.ts          # socket.io event wiring
 │   ├── lib/
+│   │   ├── chat-server.ts         # Socket.io server setup + event handlers
 │   │   ├── store.ts               # in-memory data store + seed (no database)
-│   │   ├── socket-client.ts       # singleton Socket.io client (XTransformPort)
+│   │   ├── socket-client.ts       # singleton Socket.io client
 │   │   ├── auth.ts                # cookie session helpers
 │   │   └── utils.ts               # cn() helper
 │   └── store/
-│       └── chat-store.ts          # Zustand store (me, members, openChats, online)
-└── README.md                      # this file
+│       └── chat-store.ts          # Zustand store
+└── README.md
 ```
 
 ## Setup & Run
 
-### 1. Install dependencies
-
 ```bash
 npm install        # or: bun install
-cd mini-services/chat-service && npm install && cd ..
-```
-
-### 2. Start everything
-
-```bash
 npm run dev        # or: bun run dev
 ```
 
-This single command starts:
-- Next.js dev server on port 3000 (Turbopack)
-- Socket.io chat-service on port 3003
+That's it. `next dev` starts Next.js on port 3000, and `instrumentation.ts`
+automatically starts Socket.io on port 3003 within the same process. The
+6 demo members are seeded into the in-memory store on first request.
 
-The 6 demo members are auto-seeded into the in-memory store on first request.
-
-Open the app via the preview panel (or `http://localhost:81/` through the
-Caddy gateway if you're on the sandbox).
-
-### 3. Log in
-
-The login screen lists all 6 demo members as quick-fill buttons. Click any
-member, the password field is pre-filled with `123456`, then click **دخول**.
-
-To test real-time messaging across two users, open the app in a second
-browser session (or a private window so cookies don't conflict), log in as
-a different member, and start chatting.
+Open the preview panel, log in as any member (password `123456`), and
+start chatting. To test real-time across two users, open a second browser
+session (private window to avoid cookie conflicts) and log in as a
+different member.
 
 ## Seeded Members
 
-All passwords: `123456`. Seeded automatically on first API request.
+All passwords: `123456`.
 
 | Name | Avatar color |
 |------|--------------|
-| أحمد محمد | `#E5416E` (pink-red) |
-| فاطمة علي | `#6280EE` (Messenger blue) |
-| خالد العتيبي | `#F59E0B` (amber) |
-| نورا الشمري | `#10B981` (emerald) |
-| سارة حسن | `#8B5CF6` (violet) |
-| عمر إبراهيم | `#EC4899` (pink) |
-
-## How Real-Time Works
-
-1. After login, the client opens a Socket.io connection via
-   `io("/?XTransformPort=3003")` — Caddy routes this to port 3003.
-2. The client emits `authenticate` with the logged-in `userId`.
-3. The chat-service tracks online users and broadcasts `user-online` /
-   `user-offline` to everyone.
-4. When a user sends a message:
-   - The client POSTs to `/api/conversations/[memberId]/messages` (stores
-     in the Next.js in-memory store).
-   - On success, the client emits `message-sent` with the saved row.
-   - The chat-service relays `new-message` to the recipient's sockets.
-5. Typing indicator: the client emits `typing`; the service relays it.
-6. Read receipts: when a chat is opened, the client POSTs to
-   `/api/conversations/[memberId]/read` (marks seen in memory) and emits
-   `message-seen`; the service relays `messages-seen` so the sender's
-   outgoing bubbles flip to "تمت المشاهدة".
+| أحمد محمد | `#E5416E` |
+| فاطمة علي | `#6280EE` |
+| خالد العتيبي | `#F59E0B` |
+| نورا الشمري | `#10B981` |
+| سارة حسن | `#8B5CF6` |
+| عمر إبراهيم | `#EC4899` |
 
 ## Design Tokens
 
 ```
-Messenger blue:        #6280EE  (header, outgoing bubbles, send button)
-Messenger blue dark:   #4F6BE0  (hover)
+Messenger blue:        #6280EE
 Incoming bubble gray:  #F3F3F3
 Online dot green:      #31A24C
-Offline dot gray:      #B0B3B8
 Unread badge red:      #E41E3F
 Border gray:           #E4E6EB
-Body background:       #F0F2F5
-Card background:       #FFFFFF
 ```
-
-## Notes
-
-- All data lives in process memory. Restarting the Next.js server resets
-  messages (the 6 members are re-seeded automatically).
-- The Socket.io service is a stateless relay — it doesn't store any data.
-- Passwords are hashed with `bcryptjs` (10 rounds).
-- The dev script uses `trap 'kill 0' EXIT` to ensure the Socket.io
-  background process is cleaned up when Next.js exits.
